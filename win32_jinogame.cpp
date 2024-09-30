@@ -1,5 +1,6 @@
 ﻿#include <windows.h>
 #include <stdint.h>
+#include <xinput.h>
 
 #define internal_func static
 #define local_persist static
@@ -34,6 +35,34 @@ struct window_dimensions
 global_variable bool Running;
 global_variable offscreen_buffer GlobalBackBuffer;
 
+// Use '#define' for the functions so we can have stub functions, in case the DLL for XInput cannot load in a system due to Platform Requirements (https://learn.microsoft.com/en-us/windows/win32/api/xinput/nf-xinput-xinputgetstate#platform-requirements)
+#define X_INPUT_GET_STATE(name) FARPROC WINAPI name(DWORD dwUserIndex, XINPUT_STATE *pState)
+#define X_INPUT_SET_STATE(name) FARPROC WINAPI name(DWORD dwUserIndex, XINPUT_VIBRATION *pVibration)
+// This is to be able to have pointers to the functions
+typedef X_INPUT_GET_STATE(x_input_get_state);
+typedef X_INPUT_SET_STATE(x_input_set_state);
+// Defining stubs for the functions which do nothing. Now we can initialize the function pointers with these and prevent Access Violation Exceptions
+internal_func X_INPUT_GET_STATE(XInputGetStateStub) { return 0; }
+internal_func X_INPUT_SET_STATE(XInputSetStateStub) { return 0; }
+// Creating the pointers to the functions, with a similar name to the one in xinput.h and initially we set those to point to the stub functions
+global_variable x_input_get_state* XInputGetState_ = XInputGetStateStub;
+global_variable x_input_set_state* XInputSetState_ = XInputSetStateStub;
+// With this we can use the xinput.h names of the functions
+#define XInputGetState XInputGetState_
+#define XInputSetState XInputSetState_
+
+internal_func void
+J_LoadXInput()
+{
+    // TODO: There is a XINPUT_DLL macro defined in xinput.h which now is "xinput1_4.dll", later I should check if that's better
+    HMODULE XInputLibrary = LoadLibrary(L"xinput1_3.dll");
+    if (XInputLibrary)
+    {
+        XInputGetState = (x_input_get_state*)GetProcAddress(XInputLibrary, "XInputGetState");
+        XInputSetState = (x_input_set_state *)GetProcAddress(XInputLibrary, "XInputSetState");
+    }
+}
+
 internal_func window_dimensions
 J_GetWindowDimensions(HWND Window)
 {
@@ -48,14 +77,14 @@ J_GetWindowDimensions(HWND Window)
 }
 
 internal_func void
-RenderWeirdGradient(offscreen_buffer Buffer, int XOffset, int YOffset)
+RenderWeirdGradient(offscreen_buffer *Buffer, int XOffset, int YOffset)
 {
     // TODO: See what the optimizer does if we pass Buffer by value VS by pointer
-    uint8* Row = (uint8*)Buffer.Memory;
-    for (int Y = 0; Y < Buffer.Height; ++Y)
+    uint8* Row = (uint8*)Buffer->Memory;
+    for (int Y = 0; Y < Buffer->Height; ++Y)
     {
         uint32* Pixel = (uint32*)Row;
-        for (int X = 0; X < Buffer.Width; ++X)
+        for (int X = 0; X < Buffer->Width; ++X)
         {
             /*
                Pixel:           RR GG BB xx
@@ -79,7 +108,7 @@ Padding : 0xFF << 8 * 3 sets FF ┘  |  |  |
                         (Green   << 8*1) |
                         (Blue    << 8*0));
         }
-        Row += Buffer.Pitch;
+        Row += Buffer->Pitch;
     }
 }
 
@@ -111,21 +140,22 @@ J_ResizeDIBSection(offscreen_buffer *Buffer, int Width, int Height)
 }
 
 internal_func void
-J_DisplayBufferInWindow(HDC DeviceContext, int WindowWidth, int WindowHeight, 
-                        offscreen_buffer Buffer)
+J_DisplayBufferInWindow(offscreen_buffer* Buffer, HDC DeviceContext, 
+                        int WindowWidth, int WindowHeight)
 {
     // TODO: Aspect ratio correction
     // TODO: Play with stretch modes
     StretchDIBits(DeviceContext,
                   0, 0, WindowWidth, WindowHeight,
-                  0, 0, Buffer.Width, Buffer.Height,
-                  Buffer.Memory,
-                  &(Buffer.Info),
+                  0, 0, Buffer->Width, Buffer->Height,
+                  Buffer->Memory,
+                  &(Buffer->Info),
                   DIB_RGB_COLORS,
                   SRCCOPY);
 }
 
-LRESULT CALLBACK J_MainWindowCallback(HWND Window,
+internal_func LRESULT CALLBACK
+J_MainWindowCallback(HWND Window,
     UINT Message,
     WPARAM WParam,
     LPARAM LParam)
@@ -152,6 +182,65 @@ LRESULT CALLBACK J_MainWindowCallback(HWND Window,
         Running = false;
     } break;
 
+    case WM_SYSKEYDOWN:
+    case WM_SYSKEYUP:
+    case WM_KEYDOWN:
+    case WM_KEYUP:
+    {
+        uint64 VKCode = WParam;
+        bool WasDown = ((LParam & (1LL << 30)) != 0);
+        bool IsDown = ((LParam & (1LL << 31)) == 0);
+        if (WasDown != IsDown) // VIDEO https://youtu.be/J3y1x54vyIQ?t=3493 58:10
+        {
+            if (VKCode == 'W')
+            {
+            }
+            else if (VKCode == 'A')
+            {
+            }
+            else if (VKCode == 'S')
+            {
+            }
+            else if (VKCode == 'D')
+            {
+            }
+            else if (VKCode == 'Q')
+            {
+            }
+            else if (VKCode == 'E')
+            {
+            }
+            else if (VKCode == VK_UP)
+            {
+            }
+            else if (VKCode == VK_DOWN)
+            {
+            }
+            else if (VKCode == VK_LEFT)
+            {
+            }
+            else if (VKCode == VK_RIGHT)
+            {
+            }
+            else if (VKCode == VK_ESCAPE)
+            {
+                OutputDebugString(L"ESCAPE: ");
+                if (IsDown)
+                {
+                    OutputDebugString(L"IsDown ");
+                }
+                if (WasDown)
+                {
+                    OutputDebugString(L"WasDown ");
+                }
+                OutputDebugString(L"\n");
+            }
+            else if (VKCode == VK_SPACE)
+            {
+            }
+        }
+    } break;
+
     case WM_PAINT:
     {
         PAINTSTRUCT Paint;
@@ -159,8 +248,8 @@ LRESULT CALLBACK J_MainWindowCallback(HWND Window,
         int Width = Paint.rcPaint.right - Paint.rcPaint.left;
         int Height = Paint.rcPaint.bottom - Paint.rcPaint.top;
 
-        J_DisplayBufferInWindow(DeviceContext, Width, Height,
-                                GlobalBackBuffer);
+        J_DisplayBufferInWindow(&GlobalBackBuffer, DeviceContext, 
+                                Width, Height);
         EndPaint(Window, &Paint);
     } break;
 
@@ -172,12 +261,14 @@ LRESULT CALLBACK J_MainWindowCallback(HWND Window,
     return Result;
 }
 
+_Use_decl_annotations_
 int CALLBACK
 WinMain(HINSTANCE Instance,
     HINSTANCE PrevInstance,
     LPSTR CommandLine,
     int ShowCode)
 {
+    J_LoadXInput();
     WNDCLASS WindowClass = {};
     WindowClass.style = CS_HREDRAW | CS_VREDRAW | CS_OWNDC; // Flags to redraw whole window instead of painting only the new section when resizing
     WindowClass.lpfnWndProc = J_MainWindowCallback;
@@ -219,13 +310,57 @@ WinMain(HINSTANCE Instance,
                     TranslateMessage(&Message);
                     DispatchMessage(&Message);
                 }
-                RenderWeirdGradient(GlobalBackBuffer, XOffset, YOffset);
+
+                // TODO: Check if we should poll more frequently for input
+                for (DWORD controllerIndex = 0; controllerIndex < XUSER_MAX_COUNT; controllerIndex++)
+                {
+                    XINPUT_STATE ControllerState;
+                    if (XInputGetState(controllerIndex, &ControllerState) == ERROR_SUCCESS)
+                    {
+                        // Controller is plugged in
+                        // TODO: See if ControllerState.dwPacketNumber increments too rapidly
+                        XINPUT_GAMEPAD* Pad = &ControllerState.Gamepad;
+                        
+                        // Buttons
+                        bool Up = (Pad->wButtons & XINPUT_GAMEPAD_DPAD_UP);
+                        bool Down = (Pad->wButtons & XINPUT_GAMEPAD_DPAD_DOWN);
+                        bool Left = (Pad->wButtons & XINPUT_GAMEPAD_DPAD_LEFT);
+                        bool Right = (Pad->wButtons & XINPUT_GAMEPAD_DPAD_RIGHT);
+                        bool Start = (Pad->wButtons & XINPUT_GAMEPAD_START);
+                        bool Back = (Pad->wButtons & XINPUT_GAMEPAD_BACK);
+                        bool LeftThumb = (Pad->wButtons & XINPUT_GAMEPAD_LEFT_THUMB);
+                        bool RightThumb = (Pad->wButtons & XINPUT_GAMEPAD_RIGHT_THUMB);
+                        bool LeftShoulder = (Pad->wButtons & XINPUT_GAMEPAD_LEFT_SHOULDER);
+                        bool RightShoulder = (Pad->wButtons & XINPUT_GAMEPAD_RIGHT_SHOULDER);
+                        bool A = (Pad->wButtons & XINPUT_GAMEPAD_A);
+                        bool B = (Pad->wButtons & XINPUT_GAMEPAD_B);
+                        bool X = (Pad->wButtons & XINPUT_GAMEPAD_X);
+                        bool Y = (Pad->wButtons & XINPUT_GAMEPAD_Y);
+
+                        // Triggers [0 , 255]
+                        BYTE LeftTrigger = Pad->bLeftTrigger;
+                        BYTE RightTrigger = Pad->bRightTrigger;
+
+                        // ThumbSticks [-32768 , 32767]
+                        SHORT LeftStickX = Pad->sThumbLX;
+                        SHORT LeftStickY = -Pad->sThumbLY;
+                        SHORT RightStickX = Pad->sThumbRX;
+                        SHORT RightStickY = Pad->sThumbRY;
+
+                        XOffset += LeftStickX >> 12;
+                        YOffset += LeftStickY >> 12;
+                    }
+                    else
+                    {
+                        // Controller is not available
+                    }
+                }
+
+                RenderWeirdGradient(&GlobalBackBuffer, XOffset, YOffset);
 
                 window_dimensions Dimensions = J_GetWindowDimensions(Window);
-                J_DisplayBufferInWindow(DeviceContext, Dimensions.Width, Dimensions.Height, 
-                                        GlobalBackBuffer);
-                ++XOffset;
-                YOffset += 2;
+                J_DisplayBufferInWindow(&GlobalBackBuffer, DeviceContext,
+                                        Dimensions.Width, Dimensions.Height);
             }
             ReleaseDC(Window, DeviceContext);
         }
