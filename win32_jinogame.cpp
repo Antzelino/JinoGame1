@@ -36,8 +36,8 @@ global_variable bool Running;
 global_variable offscreen_buffer GlobalBackBuffer;
 
 // Use '#define' for the functions so we can have stub functions, in case the DLL for XInput cannot load in a system due to Platform Requirements (https://learn.microsoft.com/en-us/windows/win32/api/xinput/nf-xinput-xinputgetstate#platform-requirements)
-#define X_INPUT_GET_STATE(name) FARPROC WINAPI name(DWORD dwUserIndex, XINPUT_STATE *pState)
-#define X_INPUT_SET_STATE(name) FARPROC WINAPI name(DWORD dwUserIndex, XINPUT_VIBRATION *pVibration)
+#define X_INPUT_GET_STATE(name) DWORD WINAPI name(DWORD dwUserIndex, XINPUT_STATE *pState)
+#define X_INPUT_SET_STATE(name) DWORD WINAPI name(DWORD dwUserIndex, XINPUT_VIBRATION *pVibration)
 // This is to be able to have pointers to the functions
 typedef X_INPUT_GET_STATE(x_input_get_state);
 typedef X_INPUT_SET_STATE(x_input_set_state);
